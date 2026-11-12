@@ -94,8 +94,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   )
                 : Video(controller: controller, controls: NoVideoControls),
           ),
-          _Controls(player: player, item: item, onPrev: () => _go(index - 1), onNext: () => _go(index + 1),
-              hasPrev: index > 0, hasNext: index < widget.queue.length - 1),
+          _Controls(
+            player: player,
+            item: item,
+            onPrev: () => _go(index - 1),
+            onNext: () => _go(index + 1),
+            hasPrev: index > 0,
+            hasNext: index < widget.queue.length - 1,
+          ),
         ],
       ),
     );
@@ -144,14 +150,14 @@ class _ControlsState extends State<_Controls> {
                   final pos = posSnap.data ?? Duration.zero;
                   final dur = durSnap.data ?? Duration.zero;
                   final max = dur.inMilliseconds.toDouble();
-                  final value = dragValue ?? pos.inMilliseconds.toDouble().clamp(0, max <= 0 ? 1 : max);
+                  final value = dragValue ?? pos.inMilliseconds.toDouble().clamp(0.0, max <= 0 ? 1.0 : max).toDouble();
                   return Row(
                     children: [
                       Text(widget.item.isLive ? 'LIVE' : fmt(pos), style: const TextStyle(fontSize: 12)),
                       Expanded(
                         child: Slider(
-                          value: widget.item.isLive || max <= 0 ? 0 : value,
-                          max: max <= 0 ? 1 : max,
+                          value: widget.item.isLive || max <= 0 ? 0.0 : value,
+                          max: max <= 0 ? 1.0 : max,
                           onChangeStart: widget.item.isLive ? null : (v) => setState(() => dragValue = v),
                           onChanged: widget.item.isLive ? null : (v) => setState(() => dragValue = v),
                           onChangeEnd: widget.item.isLive
@@ -207,7 +213,7 @@ class _ControlsState extends State<_Controls> {
                   const Icon(Icons.volume_up, size: 18),
                   Expanded(
                     child: Slider(
-                      value: (snap.data ?? 100).clamp(0, 130).toDouble(),
+                      value: (snap.data ?? 100.0).clamp(0.0, 130.0).toDouble(),
                       min: 0,
                       max: 130,
                       onChanged: (v) => p.setVolume(v),
