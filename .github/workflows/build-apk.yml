@@ -106,6 +106,22 @@ jobs:
                   print("namespace added to", gradle, pkg)
           PY
 
+      - name: Make old plugins use Java 17 (matches Kotlin)
+        run: |
+          python3 - << 'PY'
+          import glob, os, re, pathlib
+          home = os.path.expanduser("~")
+          for gradle in glob.glob(f"{home}/.pub-cache/hosted/pub.dev/*/android/build.gradle*"):
+              g = pathlib.Path(gradle)
+              text = g.read_text(encoding="utf-8")
+              new = text.replace("JavaVersion.VERSION_11", "JavaVersion.VERSION_17")
+              new = re.sub(r"jvmTarget\s*=\s*['\"]11['\"]", 'jvmTarget = "17"', new)
+              new = re.sub(r"jvmTarget\s+['\"]11['\"]", 'jvmTarget "17"', new)
+              if new != text:
+                  g.write_text(new, encoding="utf-8")
+                  print("java 17 set in", gradle)
+          PY
+
       - run: flutter build apk --release
 
       - uses: actions/upload-artifact@v4
