@@ -21,6 +21,19 @@ jobs:
       - name: Create the Android project files
         run: flutter create --platforms=android --project-name media_x_max .
 
+      - name: Raise compileSdk to 36 (plugins require it)
+        run: |
+          python3 - << 'PY'
+          import re, pathlib
+          for p in ["android/app/build.gradle", "android/app/build.gradle.kts"]:
+              f = pathlib.Path(p)
+              if f.exists():
+                  s = f.read_text(encoding="utf-8")
+                  s = re.sub(r"compileSdk(\s*=\s*|\s+)flutter\.compileSdkVersion", "compileSdk = 36", s)
+                  f.write_text(s, encoding="utf-8")
+                  print("patched", p)
+          PY
+
       - name: Allow internet and plain http streams
         run: |
           python3 - << 'PY'
