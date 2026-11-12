@@ -1,71 +1,34 @@
-import 'package:audio_service/audio_service.dart';
+import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 
-import 'playback.dart';
+import 'models.dart';
+import 'store.dart';
 
-/// Connects the player to the Android media notification and lock screen controls.
-class MediaXAudioHandler extends BaseAudioHandler with SeekHandler {
-  MediaXAudioHandler() {
-    final pb = Playback.instance;
-    pb.player.stream.playing.listen((_) => _broadcast());
-    pb.player.stream.position.listen((_) => _broadcast());
-    pb.player.stream.duration.listen((_) => _publishItem());
-    pb.addListener(_publishItem);
-  }
+const _channel = MethodChannel('mediaxmax/scan');
 
-  void _publishItem() {
-    final pb = Playback.instance;
-    final c = pb.current;
-    if (c == null) {
-      mediaItem.add(null);
-    } else {
-      final dur = pb.player.state.duration;
-      mediaItem.add(MediaItem(
-        id: c.url,
-        title: c.title,
-        artist: c.subtitle,
-        duration: dur == Duration.zero ? null : dur,
-      ));
-    }
-    _broadcast();
-  }
+String _ext(String path) => path.contains('.') ? path.split('.').last.toLowerCase() : '';
 
-  void _broadcast() {
-    final pb = Playback.instance;
-    final playing = pb.player.state.playing;
-    playbackState.add(PlaybackState(
-      controls: [
-        MediaControl.skipToPrevious,
-        playing ? MediaControl.pause : MediaControl.play,
-        MediaControl.skipToNext,
-        MediaControl.stop,
-      ],
-      systemActions: const {MediaAction.seek},
-      androidCompactActionIndices: const [0, 1, 2],
-      processingState: pb.current == null ? AudioProcessingState.idle : AudioProcessingState.ready,
-      playing: playing,
-      updatePosition: pb.player.state.position,
-      speed: pb.player.state.rate,
+/// Finds music and videos saved on the phone and adds them to the library.
+Future<int> scanDeviceMedia(Store store) async {
+  final statuses = await [Permission.audio, Permission.videos, Permission.storage].request();
+  final granted = statuses.values.any((s) => s.isGranted || s.isLimited);
+  if (!granted) return 0;
+
+  final raw = (await _channel.invokeListMethod<dynamic>('scan')) ?? <dynamic>[];
+  final found = <Track>[];
+  for (final item in raw) {
+    final m = item as Map;
+    final path = m['path'] as String;
+    final kind = m['kind'] as String;
+    final title = (m['title'] as String?) ?? path;
+    found.add(Track(
+      path: path,
+      name: title,
+      kind: kind,
+      ext: _ext(path),
+      size: (m['size'] as num?)?.toInt() ?? 0,
     ));
   }
-
-  @override
-  Future<void> play() async => Playback.instance.player.play();
-
-  @override
-  Future<void> pause() async => Playback.instance.player.pause();
-
-  @override
-  Future<void> seek(Duration position) async => Playback.instance.player.seek(position);
-
-  @override
-  Future<void> skipToNext() async => Playback.instance.next();
-
-  @override
-  Future<void> skipToPrevious() async => Playback.instance.prev();
-
-  @override
-  Future<void> stop() async {
-    Playback.instance.stop();
-    await super.stop();
-  }
+  store.addScanned(found);
+  return found.length;
 }
