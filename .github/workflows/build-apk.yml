@@ -106,20 +106,50 @@ jobs:
                   print("namespace added to", gradle, pkg)
           PY
 
-      - name: Make old plugins use Java 17 (matches Kotlin)
+      - name: Force Java 17 and Kotlin 17 on all modules
         run: |
           python3 - << 'PY'
-          import glob, os, re, pathlib
-          home = os.path.expanduser("~")
-          for gradle in glob.glob(f"{home}/.pub-cache/hosted/pub.dev/*/android/build.gradle*"):
-              g = pathlib.Path(gradle)
-              text = g.read_text(encoding="utf-8")
-              new = text.replace("JavaVersion.VERSION_11", "JavaVersion.VERSION_17")
-              new = re.sub(r"jvmTarget\s*=\s*['\"]11['\"]", 'jvmTarget = "17"', new)
-              new = re.sub(r"jvmTarget\s+['\"]11['\"]", 'jvmTarget "17"', new)
-              if new != text:
-                  g.write_text(new, encoding="utf-8")
-                  print("java 17 set in", gradle)
+          import pathlib
+          groovy_block = """
+          subprojects {
+              afterEvaluate { p ->
+                  if (p.hasProperty('android')) {
+                      p.android {
+                          compileOptions {
+                              sourceCompatibility JavaVersion.VERSION_17
+                              targetCompatibility JavaVersion.VERSION_17
+                          }
+                      }
+                  }
+                  p.tasks.matching { it.name.endsWith('Kotlin') }.configureEach {
+                      kotlinOptions { jvmTarget = '17' }
+                  }
+              }
+          }
+          """
+          kts_block = """
+          subprojects {
+              afterEvaluate {
+                  extensions.findByName("android")?.let { ext ->
+                      (ext as com.android.build.gradle.BaseExtension).compileOptions {
+                          sourceCompatibility = JavaVersion.VERSION_17
+                          targetCompatibility = JavaVersion.VERSION_17
+                      }
+                  }
+                  tasks.matching { it.name.endsWith("Kotlin") }.configureEach {
+                      (this as org.jetbrains.kotlin.gradle.tasks.KotlinCompile).kotlinOptions.jvmTarget = "17"
+                  }
+              }
+          }
+          """
+          g = pathlib.Path("android/build.gradle")
+          k = pathlib.Path("android/build.gradle.kts")
+          if g.exists():
+              g.write_text(g.read_text(encoding="utf-8") + groovy_block, encoding="utf-8")
+              print("patched android/build.gradle")
+          elif k.exists():
+              k.write_text(k.read_text(encoding="utf-8") + kts_block, encoding="utf-8")
+              print("patched android/build.gradle.kts")
           PY
 
       - run: flutter build apk --release
