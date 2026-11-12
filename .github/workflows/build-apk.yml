@@ -21,33 +21,101 @@ jobs:
       - name: Create the Android project files
         run: flutter create --platforms=android --org com.mediax --project-name media_x_max .
 
-      - name: Background audio service, MainActivity and permissions
+      - name: Write MainActivity (media scan + background audio)
+        run: |
+          rm -rf android/app/src/main/kotlin
+          mkdir -p android/app/src/main/kotlin/com/mediax/media_x_max
+          cat > android/app/src/main/kotlin/com/mediax/media_x_max/MainActivity.kt << 'KT'
+          package com.mediax.media_x_max
+
+          import android.net.Uri
+          import android.os.Handler
+          import android.os.Looper
+          import android.provider.MediaStore
+          import com.ryanheise.audioservice.AudioServiceActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+          import java.util.concurrent.Executors
+
+          class MainActivity : AudioServiceActivity() {
+              private val executor = Executors.newSingleThreadExecutor()
+              private val main = Handler(Looper.getMainLooper())
+
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mediaxmax/scan")
+                      .setMethodCallHandler { call, result ->
+                          if (call.method == "scan") {
+                              executor.execute {
+                                  try {
+                                      val items = scanMedia()
+                                      main.post { result.success(items) }
+                                  } catch (e: Exception) {
+                                      main.post { result.error("SCAN_FAILED", e.message, null) }
+                                  }
+                              }
+                          } else {
+                              result.notImplemented()
+                          }
+                      }
+              }
+
+              private fun scanMedia(): List<Map<String, Any>> {
+                  val out = ArrayList<Map<String, Any>>()
+                  queryTable(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, "audio", out)
+                  queryTable(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video", out)
+                  return out
+              }
+
+              private fun queryTable(uri: Uri, kind: String, out: MutableList<Map<String, Any>>) {
+                  val projection = arrayOf(
+                      MediaStore.MediaColumns.DATA,
+                      MediaStore.MediaColumns.TITLE,
+                      MediaStore.MediaColumns.SIZE
+                  )
+                  contentResolver.query(uri, projection, null, null, null)?.use { c ->
+                      val dataCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
+                      val titleCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.TITLE)
+                      val sizeCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
+                      while (c.moveToNext()) {
+                          val path = c.getString(dataCol) ?: continue
+                          out.add(mapOf(
+                              "path" to path,
+                              "title" to (c.getString(titleCol) ?: path.substringAfterLast('/')),
+                              "size" to c.getLong(sizeCol),
+                              "kind" to kind
+                          ))
+                      }
+                  }
+              }
+
+              override fun onDestroy() {
+                  executor.shutdown()
+                  super.onDestroy()
+              }
+          }
+          KT
+
+      - name: Permissions and background service in the manifest
         run: |
           python3 - << 'PY'
           import pathlib, re
-          base = pathlib.Path("android/app/src/main/kotlin")
-          for old in base.rglob("MainActivity.kt"):
-              old.unlink()
-          pkg_dir = base / "com" / "mediax" / "media_x_max"
-          pkg_dir.mkdir(parents=True, exist_ok=True)
-          (pkg_dir / "MainActivity.kt").write_text(
-              "package com.mediax.media_x_max\n\n"
-              "import com.ryanheise.audioservice.AudioServiceActivity\n\n"
-              "class MainActivity : AudioServiceActivity()\n",
-              encoding="utf-8")
           mf = pathlib.Path("android/app/src/main/AndroidManifest.xml")
           s = mf.read_text(encoding="utf-8")
           perms = (
-              '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
+              '<uses-permission android:name="android.permission.INTERNET" />\n'
+              '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
               '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n'
               '    <uses-permission android:name="android.permission.WAKE_LOCK" />\n'
               '    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n'
               '    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />\n'
               '    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n'
-              '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n'
+              '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    '
           )
           if "FOREGROUND_SERVICE_MEDIA_PLAYBACK" not in s:
               s = re.sub(r"(<manifest[^>]*>)", r"\1\n    " + perms, s, count=1)
+          if "usesCleartextTraffic" not in s:
+              s = s.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
           services = (
               '<service android:name="com.ryanheise.audioservice.AudioService" '
               'android:foregroundServiceType="mediaPlayback" android:exported="true">\n'
@@ -64,74 +132,10 @@ jobs:
           if "com.ryanheise.audioservice.AudioService" not in s:
               s = s.replace("</application>", services + "</application>", 1)
           mf.write_text(s, encoding="utf-8")
-          print("manifest and MainActivity updated")
-          PY
-
-      - name: Allow internet and plain http streams
-        run: |
-          python3 - << 'PY'
-          import re
-          p = "android/app/src/main/AndroidManifest.xml"
-          s = open(p, encoding="utf-8").read()
-          if "android.permission.INTERNET" not in s:
-              s = re.sub(r"(<manifest[^>]*>)", r'\1\n    <uses-permission android:name="android.permission.INTERNET" />', s, count=1)
-          if "usesCleartextTraffic" not in s:
-              s = s.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
-          open(p, "w", encoding="utf-8").write(s)
+          print("manifest updated")
           PY
 
       - run: flutter pub get
-
-      - name: Add missing namespace to old plugins
-        run: |
-          python3 - << 'PY'
-          import glob, os, re, pathlib
-          home = os.path.expanduser("~")
-          for gradle in glob.glob(f"{home}/.pub-cache/hosted/pub.dev/*/android/build.gradle*"):
-              g = pathlib.Path(gradle)
-              text = g.read_text(encoding="utf-8")
-              if re.search(r"^\s*namespace\b", text, re.M):
-                  continue
-              manifest = g.parent / "src" / "main" / "AndroidManifest.xml"
-              if not manifest.exists():
-                  continue
-              m = re.search(r'package="([^"]+)"', manifest.read_text(encoding="utf-8"))
-              if not m:
-                  continue
-              pkg = m.group(1)
-              line = f'namespace = "{pkg}"' if g.suffix == ".kts" else f'namespace "{pkg}"'
-              text, n = re.subn(r"^(\s*)android\s*\{", lambda mm: mm.group(0) + "\n" + mm.group(1) + "    " + line, text, count=1, flags=re.M)
-              if n:
-                  g.write_text(text, encoding="utf-8")
-                  print("namespace added to", gradle, pkg)
-          PY
-
-      - name: Force Java 17 and Kotlin 17 on all modules
-        run: |
-          python3 - << 'PY'
-          import pathlib
-          kts_block = """
-          subprojects {
-              plugins.withId("com.android.library") {
-                  extensions.configure<com.android.build.api.dsl.CommonExtension<*, *, *, *, *, *>>("android") {
-                      compileOptions {
-                          sourceCompatibility = JavaVersion.VERSION_17
-                          targetCompatibility = JavaVersion.VERSION_17
-                      }
-                  }
-              }
-              tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-                  compilerOptions {
-                      jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-                  }
-              }
-          }
-          """
-          k = pathlib.Path("android/build.gradle.kts")
-          if k.exists():
-              k.write_text(k.read_text(encoding="utf-8") + kts_block, encoding="utf-8")
-              print("patched android/build.gradle.kts")
-          PY
 
       - run: flutter build apk --release
 
