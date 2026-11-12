@@ -106,9 +106,9 @@ class _LibraryPageState extends State<LibraryPage> {
         .where((t) => t.name.toLowerCase().contains(query.toLowerCase()))
         .toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    final playables = [
+    final PlayItems = [
       for (final t in items)
-        Playable(url: t.path, title: t.name, subtitle: '${t.kind == 'audio' ? 'Audio' : 'Video'} · ${t.ext.toUpperCase()}',
+        PlayItem(url: t.path, title: t.name, subtitle: '${t.kind == 'audio' ? 'Audio' : 'Video'} · ${t.ext.toUpperCase()}',
             isLive: false, kind: t.kind),
     ];
 
@@ -151,7 +151,7 @@ class _LibraryPageState extends State<LibraryPage> {
                         borderRadius: BorderRadius.circular(14),
                         onTap: () => Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (_) => PlayerScreen(queue: playables, index: i)),
+                          MaterialPageRoute(builder: (_) => PlayerScreen(queue: PlayItems, index: i)),
                         ),
                         onLongPress: () => widget.store.removeTrack(t.path),
                         child: Column(
@@ -261,8 +261,8 @@ class _IptvPageState extends State<IptvPage> {
             (query.isEmpty || c.name.toLowerCase().contains(query.toLowerCase())))
         .take(500)
         .toList();
-    final playables = [
-      for (final c in list) Playable(url: c.url, title: c.name, subtitle: c.group, isLive: true, kind: 'video'),
+    final PlayItems = [
+      for (final c in list) PlayItem(url: c.url, title: c.name, subtitle: c.group, isLive: true, kind: 'video'),
     ];
 
     return Column(
@@ -324,7 +324,7 @@ class _IptvPageState extends State<IptvPage> {
                       borderRadius: BorderRadius.circular(14),
                       onTap: () => Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => PlayerScreen(queue: playables, index: i)),
+                        MaterialPageRoute(builder: (_) => PlayerScreen(queue: PlayItems, index: i)),
                       ),
                       child: Container(
                         padding: const EdgeInsets.all(10),
