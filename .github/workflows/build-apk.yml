@@ -21,7 +21,7 @@ jobs:
       - name: Create the Android project files
         run: flutter create --platforms=android --project-name media_x_max .
 
-      - name: Set compileSdk to 36
+      - name: Set compileSdk to 36 for the app
         run: |
           python3 - << 'PY'
           import re, pathlib
@@ -41,6 +41,40 @@ jobs:
               for line in out:
                   if "compileSdk" in line:
                       print(line)
+          PY
+
+      - name: Force compileSdk 36 on plugin modules (file_picker etc.)
+        run: |
+          python3 - << 'PY'
+          import pathlib
+          groovy = """
+          subprojects {
+              afterEvaluate { project ->
+                  if (project.hasProperty('android')) {
+                      project.android { compileSdkVersion 36 }
+                  }
+              }
+          }
+          """
+          kts = """
+          subprojects {
+              afterEvaluate {
+                  if (hasProperty("android")) {
+                      extensions.configure<com.android.build.gradle.BaseExtension> {
+                          compileSdkVersion(36)
+                      }
+                  }
+              }
+          }
+          """
+          g = pathlib.Path("android/build.gradle")
+          k = pathlib.Path("android/build.gradle.kts")
+          if g.exists():
+              g.write_text(g.read_text(encoding="utf-8") + groovy, encoding="utf-8")
+              print("patched android/build.gradle")
+          elif k.exists():
+              k.write_text(k.read_text(encoding="utf-8") + kts, encoding="utf-8")
+              print("patched android/build.gradle.kts")
           PY
 
       - name: Allow internet and plain http streams
