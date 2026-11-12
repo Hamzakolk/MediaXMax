@@ -3,6 +3,7 @@ const int maxChannels = 20000;
 const videoExt = {
   'mp4', 'mkv', 'webm', 'mov', 'avi', 'wmv', 'm4v', 'mpg', 'mpeg', 'ts', 'm2ts', '3gp', 'ogv', 'flv'
 };
+const imageExt = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'};
 const audioExt = {
   'mp3', 'flac', 'wav', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'aiff', 'alac', 'ape', 'mka'
 };
@@ -13,6 +14,7 @@ String? kindOf(String path) {
   final ext = path.substring(dot + 1).toLowerCase();
   if (videoExt.contains(ext)) return 'video';
   if (audioExt.contains(ext)) return 'audio';
+  if (imageExt.contains(ext)) return 'image';
   return null;
 }
 
