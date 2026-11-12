@@ -110,44 +110,25 @@ jobs:
         run: |
           python3 - << 'PY'
           import pathlib
-          groovy_block = """
-          subprojects {
-              afterEvaluate { p ->
-                  if (p.hasProperty('android')) {
-                      p.android {
-                          compileOptions {
-                              sourceCompatibility JavaVersion.VERSION_17
-                              targetCompatibility JavaVersion.VERSION_17
-                          }
-                      }
-                  }
-                  p.tasks.matching { it.name.endsWith('Kotlin') }.configureEach {
-                      kotlinOptions { jvmTarget = '17' }
-                  }
-              }
-          }
-          """
           kts_block = """
           subprojects {
-              afterEvaluate {
-                  extensions.findByName("android")?.let { ext ->
-                      (ext as com.android.build.gradle.BaseExtension).compileOptions {
+              plugins.withId("com.android.library") {
+                  extensions.configure<com.android.build.api.dsl.CommonExtension<*, *, *, *, *, *>>("android") {
+                      compileOptions {
                           sourceCompatibility = JavaVersion.VERSION_17
                           targetCompatibility = JavaVersion.VERSION_17
                       }
                   }
-                  tasks.matching { it.name.endsWith("Kotlin") }.configureEach {
-                      (this as org.jetbrains.kotlin.gradle.tasks.KotlinCompile).kotlinOptions.jvmTarget = "17"
+              }
+              tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+                  compilerOptions {
+                      jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
                   }
               }
           }
           """
-          g = pathlib.Path("android/build.gradle")
           k = pathlib.Path("android/build.gradle.kts")
-          if g.exists():
-              g.write_text(g.read_text(encoding="utf-8") + groovy_block, encoding="utf-8")
-              print("patched android/build.gradle")
-          elif k.exists():
+          if k.exists():
               k.write_text(k.read_text(encoding="utf-8") + kts_block, encoding="utf-8")
               print("patched android/build.gradle.kts")
           PY
