@@ -14,7 +14,7 @@ String fmt(Duration d) {
 }
 
 class PlayerScreen extends StatefulWidget {
-  final List<Playable> queue;
+  final List<PlayItem> queue;
   final int index;
 
   const PlayerScreen({super.key, required this.queue, required this.index});
@@ -28,7 +28,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   late final VideoController controller = VideoController(player);
   late int index = widget.index;
 
-  Playable get current => widget.queue[index];
+  PlayItem get current => widget.queue[index];
 
   @override
   void initState() {
@@ -104,7 +104,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
 class _Controls extends StatefulWidget {
   final Player player;
-  final Playable item;
+  final PlayItem item;
   final VoidCallback onPrev;
   final VoidCallback onNext;
   final bool hasPrev;
