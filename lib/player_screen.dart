@@ -1,10 +1,12 @@
 import 'dart:math';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import 'models.dart';
+import 'playback.dart';
+import 'player_sheets.dart';
 import 'theme.dart';
 
 String fmt(Duration d) {
@@ -16,115 +18,136 @@ String fmt(Duration d) {
   return h > 0 ? '$h:${p(m)}:${p(sec)}' : '$m:${p(sec)}';
 }
 
-class PlayerScreen extends StatefulWidget {
-  final List<PlayItem> queue;
-  final int index;
+/// Opens the full player for a queue. Used by the library and IPTV screens.
+void openPlayer(BuildContext context, List<PlayItem> queue, int index) {
+  Playback.instance.playQueue(queue, index);
+  Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerScreen()));
+}
 
-  const PlayerScreen({super.key, required this.queue, required this.index});
+class PlayerScreen extends StatefulWidget {
+  const PlayerScreen({super.key});
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
 class _PlayerScreenState extends State<PlayerScreen> {
-  late final Player player = Player();
-  late final VideoController controller = VideoController(player);
-  late int index = widget.index;
-
-  PlayItem get current => widget.queue[index];
-
-  @override
-  void initState() {
-    super.initState();
-    _open();
-    player.stream.completed.listen((done) {
-      if (done && !current.isLive && index < widget.queue.length - 1) _go(index + 1);
-    });
-  }
-
-  void _open() => player.open(Media(current.url));
-
-  void _go(int i) {
-    if (i < 0 || i >= widget.queue.length) return;
-    setState(() => index = i);
-    _open();
-  }
-
-  @override
-  void dispose() {
-    player.dispose();
-    super.dispose();
-  }
+  int tab = 0; // 0 = now playing, 1 = lyrics
 
   @override
   Widget build(BuildContext context) {
-    final item = current;
-    final audio = item.kind == 'audio';
+    final pb = Playback.instance;
     return Scaffold(
       body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.keyboard_arrow_down, size: 30),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  Expanded(
-                    child: Text(
-                      audio ? 'Now Playing' : item.title,
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                  if (item.isLive)
-                    Container(
-                      margin: const EdgeInsets.only(right: 12),
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(color: Colors.redAccent, borderRadius: BorderRadius.circular(6)),
-                      child: const Text('LIVE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                    )
-                  else
-                    const SizedBox(width: 48),
-                ],
-              ),
-            ),
-            if (audio)
-              Expanded(child: _ArtBlock(item: item, index: index))
-            else
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: Video(controller: controller, controls: NoVideoControls),
-                  ),
+        child: ListenableBuilder(
+          listenable: pb,
+          builder: (context, _) {
+            final item = pb.current;
+            if (item == null) {
+              return const Center(child: Text('Nothing playing', style: TextStyle(color: kMuted)));
+            }
+            final audio = item.kind == 'audio';
+            return Column(
+              children: [
+                _Header(item: item, audio: audio),
+                if (audio) _Tabs(tab: tab, onChanged: (t) => setState(() => tab = t)),
+                Expanded(
+                  child: audio
+                      ? (tab == 0 ? _ArtBlock(item: item, index: pb.index) : const _LyricsView())
+                      : Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(18),
+                            child: Video(controller: pb.controller, controls: NoVideoControls),
+                          ),
+                        ),
                 ),
-              ),
-            _Controls(
-              player: player,
-              item: item,
-              audio: audio,
-              onPrev: () => _go(index - 1),
-              onNext: () => _go(index + 1),
-              hasPrev: index > 0,
-              hasNext: index < widget.queue.length - 1,
-            ),
-          ],
+                const _Controls(),
+              ],
+            );
+          },
         ),
       ),
     );
   }
 }
 
+class _Header extends StatelessWidget {
+  final PlayItem item;
+  final bool audio;
+  const _Header({required this.item, required this.audio});
+
+  @override
+  Widget build(BuildContext context) {
+    final sleepEnds = Playback.instance.sleepEndsAt;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.keyboard_arrow_down, size: 30),
+            onPressed: () => Navigator.pop(context),
+          ),
+          Expanded(
+            child: Text(
+              audio ? 'Now Playing' : item.title,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          if (item.isLive)
+            Container(
+              margin: const EdgeInsets.only(right: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(color: Colors.redAccent, borderRadius: BorderRadius.circular(6)),
+              child: const Text('LIVE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+            ),
+          if (sleepEnds != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Text(fmt(sleepEnds.difference(DateTime.now())),
+                  style: const TextStyle(color: kAccent, fontSize: 12)),
+            ),
+          IconButton(icon: const Icon(Icons.bedtime_outlined), onPressed: () => showSleepTimer(context)),
+          IconButton(icon: const Icon(Icons.tune_rounded), onPressed: () => showEqualizer(context)),
+        ],
+      ),
+    );
+  }
+}
+
+class _Tabs extends StatelessWidget {
+  final int tab;
+  final ValueChanged<int> onChanged;
+  const _Tabs({required this.tab, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    Widget tabText(String label, int i) => Expanded(
+          child: InkWell(
+            onTap: () => onChanged(i),
+            child: Column(
+              children: [
+                Text(label,
+                    style: TextStyle(
+                      color: tab == i ? Colors.white : kMuted,
+                      fontWeight: tab == i ? FontWeight.bold : FontWeight.normal,
+                    )),
+                const SizedBox(height: 6),
+                Container(height: 3, width: 60, color: tab == i ? kAccent : Colors.transparent),
+              ],
+            ),
+          ),
+        );
+    return Row(children: [tabText('Now Playing', 0), tabText('Lyrics', 1)]);
+  }
+}
+
 class _ArtBlock extends StatelessWidget {
   final PlayItem item;
   final int index;
-
   const _ArtBlock({required this.item, required this.index});
 
   @override
@@ -139,7 +162,7 @@ class _ArtBlock extends StatelessWidget {
                 aspectRatio: 1,
                 child: Container(
                   decoration: BoxDecoration(
-                    gradient: artFor(index),
+                    gradient: artFor(max(index, 0)),
                     borderRadius: BorderRadius.circular(26),
                     boxShadow: [BoxShadow(color: kAccent.withOpacity(0.35), blurRadius: 30, offset: const Offset(0, 12))],
                   ),
@@ -161,48 +184,94 @@ class _ArtBlock extends StatelessWidget {
   }
 }
 
-class WavePainter extends CustomPainter {
+class _LyricsView extends StatefulWidget {
+  const _LyricsView();
+
   @override
-  void paint(Canvas canvas, Size size) {
-    const bars = 48;
-    final w = size.width / bars;
-    final paint = Paint()
-      ..shader = const LinearGradient(colors: [kAccent, kAccent2]).createShader(Offset.zero & size);
-    for (var i = 0; i < bars; i++) {
-      final h = (sin(i * 0.55) * 0.4 + sin(i * 0.23) * 0.3 + 0.7).clamp(0.15, 1.0) * size.height;
-      final x = i * w + w / 2;
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromCenter(center: Offset(x, size.height / 2), width: w * 0.55, height: h),
-          const Radius.circular(3),
-        ),
-        paint,
-      );
-    }
+  State<_LyricsView> createState() => _LyricsViewState();
+}
+
+class _LyricsViewState extends State<_LyricsView> {
+  final ScrollController scroll = ScrollController();
+  static const double rowHeight = 48;
+
+  Future<void> _pick() async {
+    final res = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['lrc', 'txt']);
+    final path = res?.files.single.path;
+    if (path != null) await Playback.instance.loadLyricsFile(path);
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  void dispose() {
+    scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pb = Playback.instance;
+    if (pb.lyrics.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'No lyrics file found.\nPut a .lrc file with the same name next to the song, or pick one.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: kMuted),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton(onPressed: _pick, child: const Text('Pick .lrc file')),
+            ],
+          ),
+        ),
+      );
+    }
+    return StreamBuilder<Duration>(
+      stream: pb.player.stream.position,
+      builder: (context, snap) {
+        final pos = snap.data ?? Duration.zero;
+        var active = 0;
+        for (var i = 0; i < pb.lyrics.length; i++) {
+          if (pb.lyrics[i].time <= pos) active = i;
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (scroll.hasClients) {
+            scroll.animateTo(max(0, active * rowHeight - 120),
+                duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+          }
+        });
+        return ListView.builder(
+          controller: scroll,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 120),
+          itemCount: pb.lyrics.length,
+          itemBuilder: (context, i) {
+            final isActive = i == active;
+            return SizedBox(
+              height: rowHeight,
+              child: Center(
+                child: Text(
+                  pb.lyrics[i].text,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: isActive ? 20 : 16,
+                    fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                    color: isActive ? Colors.white : kMuted,
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
 }
 
 class _Controls extends StatefulWidget {
-  final Player player;
-  final PlayItem item;
-  final bool audio;
-  final VoidCallback onPrev;
-  final VoidCallback onNext;
-  final bool hasPrev;
-  final bool hasNext;
-
-  const _Controls({
-    required this.player,
-    required this.item,
-    required this.audio,
-    required this.onPrev,
-    required this.onNext,
-    required this.hasPrev,
-    required this.hasNext,
-  });
+  const _Controls();
 
   @override
   State<_Controls> createState() => _ControlsState();
@@ -213,19 +282,18 @@ class _ControlsState extends State<_Controls> {
 
   @override
   Widget build(BuildContext context) {
-    final p = widget.player;
+    final pb = Playback.instance;
+    final p = pb.player;
+    final item = pb.current;
+    final audio = item?.kind == 'audio';
+    final live = item?.isLive ?? false;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (widget.audio)
-            SizedBox(
-              height: 44,
-              width: double.infinity,
-              child: CustomPaint(painter: WavePainter()),
-            ),
-          const SizedBox(height: 6),
+          if (audio)
+            SizedBox(height: 44, width: double.infinity, child: CustomPaint(painter: _WavePainter())),
           StreamBuilder<Duration>(
             stream: p.stream.position,
             builder: (context, posSnap) => StreamBuilder<Duration>(
@@ -246,10 +314,10 @@ class _ControlsState extends State<_Controls> {
                         overlayShape: SliderComponentShape.noOverlay,
                       ),
                       child: Slider(
-                        value: widget.item.isLive || max <= 0 ? 0.0 : value,
+                        value: live || max <= 0 ? 0.0 : value,
                         max: max <= 0 ? 1.0 : max,
-                        onChanged: widget.item.isLive ? null : (v) => setState(() => dragValue = v),
-                        onChangeEnd: widget.item.isLive
+                        onChanged: live ? null : (v) => setState(() => dragValue = v),
+                        onChangeEnd: live
                             ? null
                             : (v) {
                                 p.seek(Duration(milliseconds: v.round()));
@@ -259,9 +327,9 @@ class _ControlsState extends State<_Controls> {
                     ),
                     Row(
                       children: [
-                        Text(widget.item.isLive ? 'LIVE' : fmt(pos), style: const TextStyle(color: kMuted, fontSize: 12)),
+                        Text(live ? 'LIVE' : fmt(pos), style: const TextStyle(color: kMuted, fontSize: 12)),
                         const Spacer(),
-                        Text(widget.item.isLive ? '' : fmt(dur), style: const TextStyle(color: kMuted, fontSize: 12)),
+                        Text(live ? '' : fmt(dur), style: const TextStyle(color: kMuted, fontSize: 12)),
                       ],
                     ),
                   ],
@@ -269,12 +337,11 @@ class _ControlsState extends State<_Controls> {
               },
             ),
           ),
-          const SizedBox(height: 6),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               IconButton(
-                onPressed: widget.hasPrev ? widget.onPrev : null,
+                onPressed: pb.hasPrev ? pb.prev : null,
                 icon: const Icon(Icons.skip_previous_rounded, size: 34),
               ),
               StreamBuilder<bool>(
@@ -286,14 +353,15 @@ class _ControlsState extends State<_Controls> {
                     height: 68,
                     decoration: const BoxDecoration(gradient: accentGradient, shape: BoxShape.circle),
                     child: IconButton(
-                      onPressed: p.playOrPause,
-                      icon: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 40, color: Colors.white),
+                      onPressed: pb.toggle,
+                      icon: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                          size: 40, color: Colors.white),
                     ),
                   );
                 },
               ),
               IconButton(
-                onPressed: widget.hasNext ? widget.onNext : null,
+                onPressed: pb.hasNext ? pb.next : null,
                 icon: const Icon(Icons.skip_next_rounded, size: 34),
               ),
               PopupMenuButton<double>(
@@ -341,4 +409,28 @@ class _ControlsState extends State<_Controls> {
       ),
     );
   }
+}
+
+class _WavePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    const bars = 48;
+    final w = size.width / bars;
+    final paint = Paint()
+      ..shader = const LinearGradient(colors: [kAccent, kAccent2]).createShader(Offset.zero & size);
+    for (var i = 0; i < bars; i++) {
+      final h = (sin(i * 0.55) * 0.4 + sin(i * 0.23) * 0.3 + 0.7).clamp(0.15, 1.0) * size.height;
+      final x = i * w + w / 2;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromCenter(center: Offset(x, size.height / 2), width: w * 0.55, height: h),
+          const Radius.circular(3),
+        ),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
