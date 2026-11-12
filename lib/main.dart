@@ -2,17 +2,13 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'image_viewer.dart';
+import 'mini_player.dart';
 import 'models.dart';
 import 'player_screen.dart';
+import 'playback.dart';
 import 'store.dart';
-
-const themeColors = {
-  'midnight': Color(0xFF1E88FF),
-  'crimson': Color(0xFFE5484D),
-  'emerald': Color(0xFF2ECC71),
-  'amber': Color(0xFFF5A524),
-  'mono': Color(0xFF8A93B0),
-};
+import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,64 +24,71 @@ class MediaXApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: store,
-      builder: (context, _) => MaterialApp(
-        title: 'Media X Max',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          useMaterial3: true,
-          brightness: Brightness.dark,
-          colorSchemeSeed: themeColors[store.theme] ?? themeColors['midnight'],
-        ),
-        home: HomePage(store: store),
-      ),
+    return MaterialApp(
+      title: 'Media X Max',
+      debugShowCheckedModeBanner: false,
+      theme: appTheme(),
+      home: HomeShell(store: store),
     );
   }
 }
 
-class HomePage extends StatefulWidget {
+class HomeShell extends StatefulWidget {
   final Store store;
-  const HomePage({super.key, required this.store});
+  const HomeShell({super.key, required this.store});
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomeShellState extends State<HomeShell> {
   int tab = 0;
 
   @override
   Widget build(BuildContext context) {
-    final pages = [
-      LibraryPage(store: widget.store),
-      IptvPage(store: widget.store),
-      SettingsPage(store: widget.store),
-    ];
     return Scaffold(
-      body: SafeArea(child: pages[tab]),
+      body: Stack(
+        children: [
+          SafeArea(
+            child: IndexedStack(
+              index: tab,
+              children: [
+                HomeTab(store: widget.store),
+                IptvTab(store: widget.store),
+                SettingsTab(store: widget.store),
+              ],
+            ),
+          ),
+          const Positioned(left: 10, right: 10, bottom: 6, child: MiniPlayer()),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
+        backgroundColor: kCard,
+        indicatorColor: kAccent.withOpacity(0.25),
         selectedIndex: tab,
         onDestinationSelected: (i) => setState(() => tab = i),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.video_library_outlined), label: 'Library'),
-          NavigationDestination(icon: Icon(Icons.live_tv_outlined), label: 'IPTV'),
-          NavigationDestination(icon: Icon(Icons.settings_outlined), label: 'Settings'),
+          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
+          NavigationDestination(icon: Icon(Icons.live_tv_outlined), selectedIcon: Icon(Icons.live_tv), label: 'IPTV'),
+          NavigationDestination(icon: Icon(Icons.more_horiz), label: 'More'),
         ],
       ),
     );
   }
 }
 
-class LibraryPage extends StatefulWidget {
+// ---------- Home ----------
+
+class HomeTab extends StatefulWidget {
   final Store store;
-  const LibraryPage({super.key, required this.store});
+  const HomeTab({super.key, required this.store});
 
   @override
-  State<LibraryPage> createState() => _LibraryPageState();
+  State<HomeTab> createState() => _HomeTabState();
 }
 
-class _LibraryPageState extends State<LibraryPage> {
+class _HomeTabState extends State<HomeTab> {
+  String filter = 'all';
   String query = '';
 
   Future<void> _addFiles() async {
@@ -100,111 +103,253 @@ class _LibraryPageState extends State<LibraryPage> {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Added $count files')));
   }
 
+  void _open(Track t, List<Track> shown) {
+    if (t.kind == 'image') {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => ImageViewer(path: t.path, name: t.name)));
+      return;
+    }
+    final media = shown.where((x) => x.kind != 'image').toList();
+    final queue = [
+      for (final x in media)
+        PlayItem(
+          url: x.path,
+          title: x.name,
+          subtitle: '${x.kind == 'audio' ? 'Audio' : 'Video'} · ${x.ext.toUpperCase()}',
+          isLive: false,
+          kind: x.kind,
+        ),
+    ];
+    openPlayer(context, queue, media.indexOf(t));
+  }
+
   @override
   Widget build(BuildContext context) {
-    final items = widget.store.tracks
-        .where((t) => t.name.toLowerCase().contains(query.toLowerCase()))
-        .toList()
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    final PlayItems = [
-      for (final t in items)
-        PlayItem(url: t.path, title: t.name, subtitle: '${t.kind == 'audio' ? 'Audio' : 'Video'} · ${t.ext.toUpperCase()}',
-            isLive: false, kind: t.kind),
-    ];
+    return ListenableBuilder(
+      listenable: widget.store,
+      builder: (context, _) {
+        final all = widget.store.tracks;
+        final audio = all.where((t) => t.kind == 'audio').toList();
+        final video = all.where((t) => t.kind == 'video').toList();
+        final base = filter == 'audio' ? audio : filter == 'video' ? video : all;
+        final shown = base
+            .where((t) => t.name.toLowerCase().contains(query.toLowerCase()))
+            .toList()
+          ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Media X Max'),
-        actions: [
-          IconButton(onPressed: _addFolder, icon: const Icon(Icons.create_new_folder_outlined), tooltip: 'Add folder'),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _addFiles,
-        icon: const Icon(Icons.add),
-        label: const Text('Add files'),
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: TextField(
-              decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search your library'),
-              onChanged: (v) => setState(() => query = v),
-            ),
-          ),
-          Expanded(
-            child: items.isEmpty
-                ? const Center(child: Text('Nothing here yet. Tap "Add files".'))
-                : GridView.builder(
-                    padding: const EdgeInsets.all(12),
-                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                      maxCrossAxisExtent: 200,
-                      childAspectRatio: 0.85,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                    ),
-                    itemCount: items.length,
-                    itemBuilder: (context, i) {
-                      final t = items[i];
-                      return InkWell(
-                        borderRadius: BorderRadius.circular(14),
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => PlayerScreen(queue: PlayItems, index: i)),
-                        ),
-                        onLongPress: () => widget.store.removeTrack(t.path),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(14),
-                                  gradient: LinearGradient(colors: [
-                                    Theme.of(context).colorScheme.primary,
-                                    Theme.of(context).colorScheme.tertiary,
-                                  ]),
-                                ),
-                                child: Center(
-                                  child: Icon(t.kind == 'audio' ? Icons.music_note : Icons.play_circle_outline,
-                                      size: 40, color: Colors.white),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(t.name, maxLines: 1, overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontWeight: FontWeight.w600)),
-                            Text(t.ext.toUpperCase(), style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                          ],
-                        ),
-                      );
-                    },
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(gradient: accentGradient, borderRadius: BorderRadius.circular(12)),
+                    child: const Icon(Icons.play_arrow_rounded, color: Colors.white),
                   ),
+                  const SizedBox(width: 10),
+                  const Text('Media X', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                  const Text(' Max', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: kAccent)),
+                  const Spacer(),
+                  IconButton(onPressed: _addFolder, icon: const Icon(Icons.folder_open_rounded)),
+                  IconButton(onPressed: _addFiles, icon: const Icon(Icons.add_rounded)),
+                ],
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  hintText: 'Search',
+                  filled: true,
+                  fillColor: kCard,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                ),
+                onChanged: (v) => setState(() => query = v),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  for (final f in const [('all', 'All'), ('audio', 'Music'), ('video', 'Videos')])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(f.$2),
+                        selected: filter == f.$1,
+                        selectedColor: kAccent,
+                        backgroundColor: kCard,
+                        labelStyle: TextStyle(color: filter == f.$1 ? Colors.white : kMuted),
+                        side: BorderSide.none,
+                        onSelected: (_) => setState(() => filter = f.$1),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  _BigCard(
+                    title: 'My Music',
+                    count: audio.length,
+                    icon: Icons.music_note_rounded,
+                    gradient: const LinearGradient(colors: [Color(0xFFEC4899), kAccent]),
+                    onTap: () => setState(() => filter = 'audio'),
+                  ),
+                  const SizedBox(width: 12),
+                  _BigCard(
+                    title: 'My Videos',
+                    count: video.length,
+                    icon: Icons.movie_outlined,
+                    gradient: const LinearGradient(colors: [kAccent2, Color(0xFF6366F1)]),
+                    onTap: () => setState(() => filter = 'video'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              const Text('Library', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Expanded(
+                child: shown.isEmpty
+                    ? const Center(
+                        child: Text('Nothing here yet. Tap + to add files.', style: TextStyle(color: kMuted)),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.only(bottom: 90),
+                        itemCount: shown.length,
+                        itemBuilder: (context, i) => _TrackRow(
+                          track: shown[i],
+                          index: i,
+                          onTap: () => _open(shown[i], shown),
+                          onLongPress: () => widget.store.removeTrack(shown[i].path),
+                        ),
+                      ),
+              ),
+            ],
           ),
-        ],
+        );
+      },
+    );
+  }
+}
+
+class _BigCard extends StatelessWidget {
+  final String title;
+  final int count;
+  final IconData icon;
+  final LinearGradient gradient;
+  final VoidCallback onTap;
+
+  const _BigCard({
+    required this.title,
+    required this.count,
+    required this.icon,
+    required this.gradient,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Container(
+          height: 120,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(gradient: gradient, borderRadius: BorderRadius.circular(18)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Icon(icon, size: 30, color: Colors.white),
+              Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              Text('($count)', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
-class IptvPage extends StatefulWidget {
-  final Store store;
-  const IptvPage({super.key, required this.store});
+class _TrackRow extends StatelessWidget {
+  final Track track;
+  final int index;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  const _TrackRow({required this.track, required this.index, required this.onTap, required this.onLongPress});
 
   @override
-  State<IptvPage> createState() => _IptvPageState();
+  Widget build(BuildContext context) {
+    final icon = track.kind == 'audio'
+        ? Icons.music_note_rounded
+        : track.kind == 'image'
+            ? Icons.image_outlined
+            : Icons.play_circle_outline;
+    final label = track.kind == 'audio' ? 'Audio' : track.kind == 'image' ? 'Image' : 'Video';
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(gradient: artFor(index), borderRadius: BorderRadius.circular(12)),
+              child: Icon(icon, color: Colors.white),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(track.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text('$label · ${track.ext.toUpperCase()}', style: const TextStyle(color: kMuted, fontSize: 12)),
+                ],
+              ),
+            ),
+            const Icon(Icons.more_vert, color: kMuted),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class _IptvPageState extends State<IptvPage> {
+// ---------- IPTV ----------
+
+class IptvTab extends StatefulWidget {
+  final Store store;
+  const IptvTab({super.key, required this.store});
+
+  @override
+  State<IptvTab> createState() => _IptvTabState();
+}
+
+class _IptvTabState extends State<IptvTab> {
   String group = '';
   String query = '';
+
+  void _snack(String? err) {
+    if (err != null && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+  }
 
   Future<void> _addM3u() async {
     final ctrl = TextEditingController();
     final url = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
+        backgroundColor: kCard,
         title: const Text('Add M3U playlist'),
         content: TextField(controller: ctrl, decoration: const InputDecoration(hintText: 'https://...')),
         actions: [
@@ -214,8 +359,7 @@ class _IptvPageState extends State<IptvPage> {
       ),
     );
     if (url == null || url.trim().isEmpty) return;
-    final err = await widget.store.addM3u(url);
-    if (err != null && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+    _snack(await widget.store.addM3u(url));
   }
 
   Future<void> _addXtream() async {
@@ -226,6 +370,7 @@ class _IptvPageState extends State<IptvPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        backgroundColor: kCard,
         title: const Text('Add IPTV server'),
         content: SingleChildScrollView(
           child: Column(
@@ -237,7 +382,7 @@ class _IptvPageState extends State<IptvPage> {
               TextField(controller: name, decoration: const InputDecoration(labelText: 'Name (optional)')),
               const SizedBox(height: 8),
               const Text('Use only a service you have an account for.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  style: TextStyle(fontSize: 12, color: kMuted)),
             ],
           ),
         ),
@@ -248,146 +393,174 @@ class _IptvPageState extends State<IptvPage> {
       ),
     );
     if (ok != true) return;
-    final err = await widget.store.addXtream(server.text, user.text, pass.text, name.text);
-    if (err != null && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+    _snack(await widget.store.addXtream(server.text, user.text, pass.text, name.text));
   }
 
   @override
   Widget build(BuildContext context) {
-    final s = widget.store;
-    final groups = {for (final c in s.channels) c.group}.toList()..sort();
-    final list = s.channels
-        .where((c) => (group.isEmpty || c.group == group) &&
-            (query.isEmpty || c.name.toLowerCase().contains(query.toLowerCase())))
-        .take(500)
-        .toList();
-    final PlayItems = [
-      for (final c in list) PlayItem(url: c.url, title: c.name, subtitle: c.group, isLive: true, kind: 'video'),
-    ];
+    return ListenableBuilder(
+      listenable: widget.store,
+      builder: (context, _) {
+        final s = widget.store;
+        final groups = {for (final c in s.channels) c.group}.toList()..sort();
+        final list = s.channels
+            .where((c) =>
+                (group.isEmpty || c.group == group) &&
+                (query.isEmpty || c.name.toLowerCase().contains(query.toLowerCase())))
+            .take(500)
+            .toList();
+        final playables = [
+          for (final c in list)
+            PlayItem(url: c.url, title: c.name, subtitle: c.group, isLive: true, kind: 'video'),
+        ];
 
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              FilledButton.icon(onPressed: _addM3u, icon: const Icon(Icons.link), label: const Text('M3U URL')),
-              OutlinedButton.icon(onPressed: _addXtream, icon: const Icon(Icons.dns), label: const Text('IPTV server')),
-              for (final src in s.sources)
-                InputChip(
-                  label: Text('${src.name} · ${src.count}'),
-                  onDeleted: () => s.removeSource(src.name),
-                ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search channels'),
-                  onChanged: (v) => setState(() => query = v),
-                ),
-              ),
-              const SizedBox(width: 8),
-              DropdownButton<String>(
-                value: group.isEmpty ? '' : group,
-                items: [
-                  const DropdownMenuItem(value: '', child: Text('All groups')),
-                  for (final g in groups.take(300)) DropdownMenuItem(value: g, child: Text(g, overflow: TextOverflow.ellipsis)),
+              const Text('IPTV', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.icon(onPressed: _addM3u, icon: const Icon(Icons.link), label: const Text('M3U URL')),
+                  OutlinedButton.icon(onPressed: _addXtream, icon: const Icon(Icons.dns), label: const Text('IPTV server')),
+                  for (final src in s.sources)
+                    InputChip(
+                      label: Text('${src.name} · ${src.count}'),
+                      onDeleted: () => s.removeSource(src.name),
+                    ),
                 ],
-                onChanged: (v) => setState(() => group = v ?? ''),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      decoration: InputDecoration(
+                        prefixIcon: const Icon(Icons.search_rounded),
+                        hintText: 'Search channels',
+                        filled: true,
+                        fillColor: kCard,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+                      ),
+                      onChanged: (v) => setState(() => query = v),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  DropdownButton<String>(
+                    value: group,
+                    dropdownColor: kCard,
+                    items: [
+                      const DropdownMenuItem(value: '', child: Text('All groups')),
+                      for (final g in groups.take(300))
+                        DropdownMenuItem(
+                          value: g,
+                          child: SizedBox(width: 110, child: Text(g, overflow: TextOverflow.ellipsis)),
+                        ),
+                    ],
+                    onChanged: (v) => setState(() => group = v ?? ''),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: list.isEmpty
+                    ? const Center(
+                        child: Text('Add an M3U playlist or an IPTV server to see channels.',
+                            style: TextStyle(color: kMuted)),
+                      )
+                    : GridView.builder(
+                        padding: const EdgeInsets.only(bottom: 90),
+                        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 160,
+                          childAspectRatio: 1.05,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 10,
+                        ),
+                        itemCount: list.length,
+                        itemBuilder: (context, i) {
+                          final c = list[i];
+                          return InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: () => openPlayer(context, playables, i),
+                            child: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(color: kCard, borderRadius: BorderRadius.circular(16)),
+                              child: Column(
+                                children: [
+                                  Expanded(
+                                    child: c.logo.isNotEmpty
+                                        ? Image.network(c.logo,
+                                            fit: BoxFit.contain,
+                                            errorBuilder: (_, __, ___) => _initials(c.name, i))
+                                        : _initials(c.name, i),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(c.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                                  Text(c.group,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 11, color: kMuted)),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
               ),
             ],
           ),
-        ),
-        Expanded(
-          child: list.isEmpty
-              ? const Center(child: Text('Add an M3U playlist or an IPTV server to see channels.'))
-              : GridView.builder(
-                  padding: const EdgeInsets.all(12),
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 180,
-                    childAspectRatio: 1.1,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                  ),
-                  itemCount: list.length,
-                  itemBuilder: (context, i) {
-                    final c = list[i];
-                    return InkWell(
-                      borderRadius: BorderRadius.circular(14),
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => PlayerScreen(queue: PlayItems, index: i)),
-                      ),
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(14),
-                          color: Colors.white.withOpacity(0.05),
-                        ),
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: c.logo.isNotEmpty
-                                  ? Image.network(c.logo, fit: BoxFit.contain,
-                                      errorBuilder: (_, __, ___) => const Icon(Icons.tv, size: 36))
-                                  : const Icon(Icons.tv, size: 36),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontWeight: FontWeight.w600)),
-                            Text(c.group, maxLines: 1, overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
+        );
+      },
+    );
+  }
+
+  Widget _initials(String name, int i) {
+    final text = name.trim().isEmpty ? '?' : name.trim().substring(0, 1).toUpperCase();
+    return Center(
+      child: Container(
+        width: 52,
+        height: 52,
+        decoration: BoxDecoration(gradient: artFor(i), shape: BoxShape.circle),
+        alignment: Alignment.center,
+        child: Text(text, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+      ),
     );
   }
 }
 
-class SettingsPage extends StatelessWidget {
+// ---------- More ----------
+
+class SettingsTab extends StatelessWidget {
   final Store store;
-  const SettingsPage({super.key, required this.store});
+  const SettingsTab({super.key, required this.store});
 
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Text('Settings', style: Theme.of(context).textTheme.headlineSmall),
+        const Text('More', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
         const SizedBox(height: 16),
-        ListTile(
-          title: const Text('Theme'),
-          trailing: DropdownButton<String>(
-            value: store.theme,
-            items: const [
-              DropdownMenuItem(value: 'midnight', child: Text('Midnight')),
-              DropdownMenuItem(value: 'crimson', child: Text('Crimson')),
-              DropdownMenuItem(value: 'emerald', child: Text('Emerald')),
-              DropdownMenuItem(value: 'amber', child: Text('Amber')),
-              DropdownMenuItem(value: 'mono', child: Text('Mono')),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: kCard, borderRadius: BorderRadius.circular(16)),
+          child: const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Media X Max', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              SizedBox(height: 4),
+              Text('Your Music. Your Video. Your Experience.', style: TextStyle(color: kMuted)),
+              SizedBox(height: 10),
+              Text('Playback engine: mpv (media_kit)', style: TextStyle(color: kMuted, fontSize: 12)),
             ],
-            onChanged: (v) {
-              if (v != null) store.setTheme(v);
-            },
           ),
-        ),
-        const Divider(),
-        const ListTile(
-          title: Text('Media X Max'),
-          subtitle: Text('Android · playback engine: mpv (media_kit)'),
         ),
       ],
     );
