@@ -68,12 +68,12 @@ class Source {
 }
 
 /// One thing the player can open: a local file or a live channel.
-class Playable {
+class PlayItem {
   final String url;
   final String title;
   final String subtitle;
   final bool isLive;
   final String kind;
 
-  Playable({required this.url, required this.title, required this.subtitle, required this.isLive, required this.kind});
+  PlayItem({required this.url, required this.title, required this.subtitle, required this.isLive, required this.kind});
 }
