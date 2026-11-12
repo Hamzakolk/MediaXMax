@@ -34,6 +34,52 @@ jobs:
           open(p, "w", encoding="utf-8").write(s)
           PY
 
+      - name: Background audio service + MainActivity + permissions
+        run: |
+          python3 - << 'PY'
+          import pathlib, re
+          base = pathlib.Path("android/app/src/main/kotlin")
+          for old in base.rglob("MainActivity.kt"):
+              old.unlink()
+          pkg_dir = base / "com" / "mediax" / "media_x_max"
+          pkg_dir.mkdir(parents=True, exist_ok=True)
+          (pkg_dir / "MainActivity.kt").write_text(
+              "package com.mediax.media_x_max\n\n"
+              "import com.ryanheise.audioservice.AudioServiceActivity\n\n"
+              "class MainActivity : AudioServiceActivity()\n",
+              encoding="utf-8")
+          mf = pathlib.Path("android/app/src/main/AndroidManifest.xml")
+          s = mf.read_text(encoding="utf-8")
+          perms = (
+              '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
+              '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n'
+              '    <uses-permission android:name="android.permission.WAKE_LOCK" />\n'
+              '    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n'
+              '    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />\n'
+              '    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n'
+              '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n'
+          )
+          if "FOREGROUND_SERVICE_MEDIA_PLAYBACK" not in s:
+              s = re.sub(r"(<manifest[^>]*>)", r"\1\n    " + perms, s, count=1)
+          services = (
+              '<service android:name="com.ryanheise.audioservice.AudioService" '
+              'android:foregroundServiceType="mediaPlayback" android:exported="true">\n'
+              '            <intent-filter>\n'
+              '                <action android:name="android.media.browse.MediaBrowserService" />\n'
+              '            </intent-filter>\n'
+              '        </service>\n'
+              '        <receiver android:name="com.ryanheise.audioservice.MediaButtonReceiver" android:exported="true">\n'
+              '            <intent-filter>\n'
+              '                <action android:name="android.intent.action.MEDIA_BUTTON" />\n'
+              '            </intent-filter>\n'
+              '        </receiver>\n    '
+          )
+          if "com.ryanheise.audioservice.AudioService" not in s:
+              s = s.replace("</application>", services + "</application>", 1)
+          mf.write_text(s, encoding="utf-8")
+          print("manifest and MainActivity updated")
+          PY
+
       - run: flutter pub get
 
       - run: flutter build apk --release
