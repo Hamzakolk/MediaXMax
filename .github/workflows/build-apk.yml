@@ -19,22 +19,9 @@ jobs:
           channel: stable
 
       - name: Create the Android project files
-        run: flutter create --platforms=android --project-name media_x_max .
+        run: flutter create --platforms=android --org com.mediax --project-name media_x_max .
 
-      - name: Allow internet and plain http streams
-        run: |
-          python3 - << 'PY'
-          import re
-          p = "android/app/src/main/AndroidManifest.xml"
-          s = open(p, encoding="utf-8").read()
-          if "android.permission.INTERNET" not in s:
-              s = re.sub(r"(<manifest[^>]*>)", r'\1\n    <uses-permission android:name="android.permission.INTERNET" />', s, count=1)
-          if "usesCleartextTraffic" not in s:
-              s = s.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
-          open(p, "w", encoding="utf-8").write(s)
-          PY
-
-      - name: Background audio service + MainActivity + permissions
+      - name: Background audio service, MainActivity and permissions
         run: |
           python3 - << 'PY'
           import pathlib, re
@@ -80,7 +67,44 @@ jobs:
           print("manifest and MainActivity updated")
           PY
 
+      - name: Allow internet and plain http streams
+        run: |
+          python3 - << 'PY'
+          import re
+          p = "android/app/src/main/AndroidManifest.xml"
+          s = open(p, encoding="utf-8").read()
+          if "android.permission.INTERNET" not in s:
+              s = re.sub(r"(<manifest[^>]*>)", r'\1\n    <uses-permission android:name="android.permission.INTERNET" />', s, count=1)
+          if "usesCleartextTraffic" not in s:
+              s = s.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
+          open(p, "w", encoding="utf-8").write(s)
+          PY
+
       - run: flutter pub get
+
+      - name: Add missing namespace to old plugins
+        run: |
+          python3 - << 'PY'
+          import glob, os, re, pathlib
+          home = os.path.expanduser("~")
+          for gradle in glob.glob(f"{home}/.pub-cache/hosted/pub.dev/*/android/build.gradle*"):
+              g = pathlib.Path(gradle)
+              text = g.read_text(encoding="utf-8")
+              if re.search(r"^\s*namespace\b", text, re.M):
+                  continue
+              manifest = g.parent / "src" / "main" / "AndroidManifest.xml"
+              if not manifest.exists():
+                  continue
+              m = re.search(r'package="([^"]+)"', manifest.read_text(encoding="utf-8"))
+              if not m:
+                  continue
+              pkg = m.group(1)
+              line = f'namespace = "{pkg}"' if g.suffix == ".kts" else f'namespace "{pkg}"'
+              text, n = re.subn(r"^(\s*)android\s*\{", lambda mm: mm.group(0) + "\n" + mm.group(1) + "    " + line, text, count=1, flags=re.M)
+              if n:
+                  g.write_text(text, encoding="utf-8")
+                  print("namespace added to", gradle, pkg)
+          PY
 
       - run: flutter build apk --release
 
