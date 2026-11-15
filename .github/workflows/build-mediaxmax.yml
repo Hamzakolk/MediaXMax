@@ -1,0 +1,43 @@
+name: Build Media X Max
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Install mpv
+        shell: pwsh
+        run: choco install mpv -y --no-progress
+
+      - name: Copy mpv next to the app
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path mpv | Out-Null
+          $m = Get-ChildItem -Path C:\ProgramData\chocolatey\lib -Recurse -Filter mpv.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($m) {
+            Copy-Item -Path (Join-Path $m.DirectoryName '*') -Destination mpv -Recurse -Force
+            Write-Host "mpv copied from $($m.DirectoryName)"
+          } else {
+            Write-Host "mpv.exe not found; the app will need mpv installed on the PC"
+          }
+
+      - name: Build exe
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --name MediaXMax --collect-all webview --add-data "ui;ui" --add-data "mpv;mpv" main.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MediaXMax-windows
+          path: dist/MediaXMax.exe
